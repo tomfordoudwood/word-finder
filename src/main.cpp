@@ -5,18 +5,19 @@
 #include <string>
 #include <filesystem>
 
-struct Out {
+#include <optional>
+
+struct Outs {
     size_t row_num;
-    size_t pos_num;
-    size_t length;
+    std::vector<std::pair<size_t, size_t>> pos_len;
     std::string content;
 };
 
-std::vector<Out> find(const std::filesystem::path& file, const std::regex& r) {
+std::vector<Outs> find(const std::filesystem::path& file, const std::vector<std::regex>& r) {
 
     //std::cout << "file: " << file << std::endl;
 
-    std::vector<Out> res;
+    std::vector<Outs> res;
 
     std::ifstream is { file.c_str() };
 
@@ -26,28 +27,39 @@ std::vector<Out> find(const std::filesystem::path& file, const std::regex& r) {
     std::smatch sm;
     for (size_t line {1}; getline(is, s); ++line) {
 
-        if (regex_search(s, sm, r)) {
+        Outs outs;
+        outs.row_num = line;
+        outs.content = s;
 
-            size_t pos = sm.position();
-            size_t len = sm.length();
+        for(const auto& re : r) {
 
-            //std::cout << "pos: " << pos << " len: " << len << std::endl;
+            if (regex_search(s, sm, re)) {
 
-            Out out{line, pos, len, move(s)};
-            res.emplace_back(out);
+                size_t pos = sm.position();
+                size_t len = sm.length();
+
+                std::pair<size_t, size_t> pl{pos, len};
+
+                outs.pos_len.push_back(pl);
+
+                //std::cout << "pos: " << pos << " len: " << len << std::endl;
+
+            }
+
         }
+
+        if(!outs.pos_len.empty()) {
+            res.emplace_back(outs);
+        }
+
     }
 
     return res;
 }
 
-
 int main(int argc, char *argv[]) {
 
-    std::filesystem::path p;
-
-    std::string pattern;
-    std::regex re;
+    std::optional<std::filesystem::path> p;
 
     std::cout << "Input:";
     for(int i=0; i<argc; ++i) {
@@ -56,55 +68,87 @@ int main(int argc, char *argv[]) {
     std::cout << std::endl;
 
     if(argc < 2) {
-        std::cerr << "Bad amount of arguments!" << std::endl;
+
+        std::cerr << "No pattern data to search[1]" << std::endl;
         return 1;
-    } else if (argc == 2) {
-        p.assign(std::filesystem::current_path());
-        pattern.assign(argv[1]);
-        re.assign(pattern);
 
-        try { re = std::regex{pattern}; }
-        catch (const std::regex_error &e) {
-            std::cout << "Invalid regular expression provided.\n";
-            return 1;
-        }
-
-    } else if (argc == 3) {
-        p.assign(std::filesystem::canonical(argv[1]));
-        pattern.assign(argv[2]);
-        re.assign(pattern);
-
-        try { re = std::regex{pattern}; }
-        catch (const std::regex_error &e) {
-            std::cout << "Invalid regular expression provided.\n";
-            return 1;
-        }
     }
 
-    std::cout << "Search \"" << pattern << "\" in " << p << std::endl;
+    std::map<std::string, std::regex> patterns;
 
-    for (const auto &entry : std::filesystem::recursive_directory_iterator{p}) {
+    p = (std::string(argv[1]) == "-p" && argc > 2) ?
+                std::filesystem::canonical(argv[2]) :
+                std::filesystem::current_path();
 
-        //cout << "entry.path: " << entry.path() << " \n";
+    for(int i = p.has_value() ? 3 : 1; i<argc; ++i) {
 
-        auto res { find(entry.path(), re) };
+        std::string pattern { argv[i] };
+        std::regex re;
 
-        std::string red = "\033[41m";
-        std::string rst = "\033[0m";
-
-        for (const auto &[number, pos, len, text] : res) {
-
-            //std::cout << "pos* " << pos << " len* " << len << std::endl;
-
-            std::string colored_res = text.substr(0, pos) +
-                    red +
-                    text.substr(pos, len) +
-                    rst +
-                    text.substr(pos+len, text.size()-pos-len);
-
-            std::cout << entry << ":" << number
-                 << " - " << colored_res << '\n';
+        try { re = std::regex{pattern}; }
+        catch (const std::regex_error &e) {
+            std::cout << "Invalid regular expression \""+pattern+"\" provided.\n";
+            return 1;
         }
+
+        patterns.insert({pattern, re});
+
+    }
+
+    std::cout << "Search";
+    for(const auto& [pattern, re] : patterns) {
+        std::cout << " \"" << pattern << "\"";
+    }
+    std::cout << " in " << p.value() << std::endl;
+
+    for (const auto& entry : std::filesystem::recursive_directory_iterator{p.value()}) {
+
+        std::cout << ">>> " << entry.path() << std::endl;;
+
+        std::vector<std::regex> rexs;
+        std::transform(std::begin(patterns), std::end(patterns),
+                       std::back_inserter(rexs),
+                       [](const auto& pair){ return pair.second; });
+
+//        //for(const auto& [pattern, re] : patterns) {
+
+            auto res { find(entry.path(), rexs) };
+
+            std::cout << "SIZE OF res: " << res.size() << std::endl;
+
+            std::string red = "\033[41m";
+            std::string rst = "\033[0m";
+
+            for (auto&[number, pos_len_vec, text] : res) {
+
+                std::cout << "--> " << text << std::endl;
+
+                std::sort(std::begin(pos_len_vec), std::end(pos_len_vec),
+                          [](const auto& a, const auto& b){ return a.first < b.first; });
+
+                for(const auto& [pos, len] : pos_len_vec) {
+                    std::cout << "pos " << pos << " len " << len << std::endl;
+                }
+
+                size_t position { 0 };
+                //size_t new_position { pos_len_vec.at(0).first };
+
+                std::string colored_res = "";//text.substr(position, new_position);
+
+                for(const auto& [pos, len] : pos_len_vec) {
+                    colored_res += text.substr(position, pos-position) +
+                            red + text.substr(pos, len) + rst;
+                    position = pos + len;
+                }
+                colored_res += text.substr(position, text.size()-position);
+
+                std::cout << entry << ":" << number
+                     << " - " << colored_res << '\n';
+            }
+
+        //}
+
+
     }
 
 }
