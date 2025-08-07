@@ -6,21 +6,36 @@
 #include <filesystem>
 #include <optional>
 
-struct Inf {
+/**
+ * @brief The Inclusion struct - информация о включении паттерна в текст
+ *                               (используется при раскраске текста)
+ *
+ * pos - позиция начального символа подстроки в строке
+ * len - длинна подстроки
+ * id - идентификатор паттерна
+ */
+struct Inclusion {
     size_t pos;
     size_t len;
     size_t id;
 };
 
-struct Outs {
-    size_t row_num;
-    std::vector<Inf> pos_len;
+/**
+ * @brief The LineData struct - информация о строке текста
+ *
+ * num - номер строки в файле
+ * inclusions - информация о включениях паттернов
+ * content - содержимое строки
+ */
+struct LineData {
+    size_t num;
+    std::vector<Inclusion> inclusions;
     std::string content;
 };
 
-std::vector<Outs> find(const std::filesystem::path& file, const std::vector<std::regex>& r) {
+std::vector<LineData> find(const std::filesystem::path& file, const std::vector<std::regex>& patterns) {
 
-    std::vector<Outs> res;
+    std::vector<LineData> res;
 
     std::ifstream is { file.c_str() };
 
@@ -28,51 +43,55 @@ std::vector<Outs> find(const std::filesystem::path& file, const std::vector<std:
     std::smatch sm;
     for (size_t line {1}; getline(is, s); ++line) {
 
-        Outs outs;
-        outs.row_num = line;
-        outs.content = s;
+        LineData lineData;
+        lineData.num = line;
+        lineData.content = s;
 
         unsigned int reid{ 0 };
-        for(const auto& re : r) {
+        for(const auto& re : patterns) {
             reid++;
             if (regex_search(s, sm, re)) {
 
                 size_t pos = sm.position();
                 size_t len = sm.length();
 
-                Inf pl{pos, len, reid};
+                Inclusion inc{ pos, len, reid };
 
-                outs.pos_len.push_back(pl);
-
+                lineData.inclusions.push_back(inc);
             }
-
         }
 
-        if(!outs.pos_len.empty()) {
-            res.emplace_back(outs);
+        if(!lineData.inclusions.empty()) {
+            res.emplace_back(lineData);
         }
-
     }
 
     return res;
 }
 
-std::string colorize(std::vector<Inf> pos_len_vec, std::string text) {
-    std::sort(std::begin(pos_len_vec), std::end(pos_len_vec),
+std::string colorize(std::vector<Inclusion> incs, std::string text) {
+
+    std::sort(std::begin(incs), std::end(incs),
               [](const auto& a, const auto& b){ return a.pos < b.pos; });
 
     size_t position { 0 };
 
-    std::string colored_res = "";
+    std::string colorized_text = "";
 
-    for(const auto& [pos, len, id] : pos_len_vec) {
-        colored_res += text.substr(position, pos-position) +
-                "\033[1;3"+std::to_string(id%5)+"m" + text.substr(pos, len) + "\033[0m";
+    for(const auto& [pos, len, id] : incs) {
+
+        colorized_text +=
+                text.substr(position, pos-position) +
+                "\033[1;3"+std::to_string(id%5)+"m" +
+                text.substr(pos, len) +
+                "\033[0m";
+
         position = pos + len;
     }
-    colored_res += text.substr(position, text.size()-position);
 
-    return colored_res;
+    colorized_text += text.substr(position, text.size()-position);
+
+    return colorized_text;
 }
 
 int main(int argc, char *argv[]) {
@@ -84,43 +103,37 @@ int main(int argc, char *argv[]) {
 
     }
 
-    std::optional<std::filesystem::path> p {
+    std::optional<std::filesystem::path> path {
         (std::string(argv[1]) == "-p" && argc > 2) ?
                                  std::filesystem::canonical(argv[2]) :
                                  std::filesystem::current_path() };
 
-    std::map<std::string, std::regex> patterns;
+    std::vector<std::regex> patterns;
 
-    for(int i = p.has_value() ? 3 : 1; i<argc; ++i) {
+    for(int i = path.has_value() ? 3 : 1; i<argc; ++i) {
 
-        std::string pattern { argv[i] };
         std::regex re;
 
-        try { re = std::regex{pattern}; }
+        try { re = std::regex{argv[i]}; }
         catch (const std::regex_error &e) {
-            std::cout << "Invalid regular expression \""+pattern+"\" provided.\n";
+            std::cout << "Invalid regular expression \""+std::string(argv[i])+"\" provided.\n";
             return 1;
         }
 
-        patterns.insert({pattern, re});
+        patterns.push_back({re});
 
     }
 
-    for (const auto& entry : std::filesystem::recursive_directory_iterator{p.value()}) {
+    for (const auto& entry : std::filesystem::recursive_directory_iterator{ path.value() }) {
 
-        std::vector<std::regex> rexs;
-        std::transform(std::begin(patterns), std::end(patterns),
-                       std::back_inserter(rexs),
-                       [](const auto& pair){ return pair.second; });
+        auto res { find(entry.path(), patterns) };
 
-        auto res { find(entry.path(), rexs) };
+        for (auto&[number, incs, text] : res) {
 
-        for (auto&[number, pos_len_vec, text] : res) {
-
-            auto colored_res { colorize(pos_len_vec, text) };
+            auto colorized_text { colorize(incs, text) };
 
             std::cout << entry << ":" << number
-                 << " - " << colored_res << '\n';
+                      << " - " << colorized_text << std::endl;
         }
 
     }
