@@ -43,19 +43,17 @@ std::vector<LineData> find(const std::filesystem::path& file, const std::vector<
     std::smatch sm;
     for (size_t line {1}; getline(is, s); ++line) {
 
-        LineData lineData;
-        lineData.num = line;
-        lineData.content = s;
+        LineData lineData{ line, std::vector<Inclusion>(), s};
 
-        unsigned int reid{ 0 };
-        for(const auto& re : patterns) {
-            reid++;
-            if (regex_search(s, sm, re)) {
+        unsigned int patternId{ 0 };
+        for(const auto& pattern : patterns) {
+            patternId++;
+            if (regex_search(s, sm, pattern)) {
 
                 size_t pos = sm.position();
                 size_t len = sm.length();
 
-                Inclusion inc{ pos, len, reid };
+                Inclusion inc{ pos, len, patternId };
 
                 lineData.inclusions.push_back(inc);
             }
@@ -98,7 +96,7 @@ int main(int argc, char *argv[]) {
 
     if(argc < 2) {
 
-        std::cerr << "No pattern data to search[1]" << std::endl;
+        std::cerr << "No pattern data to search" << std::endl;
         return 1;
 
     }
@@ -132,7 +130,7 @@ int main(int argc, char *argv[]) {
 
             auto colorized_text { colorize(incs, text) };
 
-            std::cout << entry << ":" << number
+            std::cout << std::filesystem::path(entry).string() << ":" << number
                       << " - " << colorized_text << std::endl;
         }
 
