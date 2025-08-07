@@ -4,15 +4,7 @@
 #include <vector>
 #include <string>
 #include <filesystem>
-
 #include <optional>
-
-/**
- * Доделать проверку на сценарий запуска ./finder -p - выводить сообщение об ошибке(либо ищет в текущем каталоге строку "-p")
- * Написать тесты нормальные
- * Убрать ненужные распечатки
- * Добавить выделения разных паттернов разными цветами [+]
- */
 
 struct Inf {
     size_t pos;
@@ -65,15 +57,25 @@ std::vector<Outs> find(const std::filesystem::path& file, const std::vector<std:
     return res;
 }
 
-int main(int argc, char *argv[]) {
+std::string colorize(std::vector<Inf> pos_len_vec, std::string text) {
+    std::sort(std::begin(pos_len_vec), std::end(pos_len_vec),
+              [](const auto& a, const auto& b){ return a.pos < b.pos; });
 
-    std::optional<std::filesystem::path> p;
+    size_t position { 0 };
 
-    std::cout << "Input:";
-    for(int i=0; i<argc; ++i) {
-        std::cout << " " << argv[i];
+    std::string colored_res = "";
+
+    for(const auto& [pos, len, id] : pos_len_vec) {
+        colored_res += text.substr(position, pos-position) +
+                "\033[1;3"+std::to_string(id%5)+"m" + text.substr(pos, len) + "\033[0m";
+        position = pos + len;
     }
-    std::cout << std::endl;
+    colored_res += text.substr(position, text.size()-position);
+
+    return colored_res;
+}
+
+int main(int argc, char *argv[]) {
 
     if(argc < 2) {
 
@@ -82,11 +84,12 @@ int main(int argc, char *argv[]) {
 
     }
 
-    std::map<std::string, std::regex> patterns;
+    std::optional<std::filesystem::path> p {
+        (std::string(argv[1]) == "-p" && argc > 2) ?
+                                 std::filesystem::canonical(argv[2]) :
+                                 std::filesystem::current_path() };
 
-    p = (std::string(argv[1]) == "-p" && argc > 2) ?
-                std::filesystem::canonical(argv[2]) :
-                std::filesystem::current_path();
+    std::map<std::string, std::regex> patterns;
 
     for(int i = p.has_value() ? 3 : 1; i<argc; ++i) {
 
@@ -103,12 +106,6 @@ int main(int argc, char *argv[]) {
 
     }
 
-    std::cout << "Search";
-    for(const auto& [pattern, re] : patterns) {
-        std::cout << " \"" << pattern << "\"";
-    }
-    std::cout << " in " << p.value() << std::endl;
-
     for (const auto& entry : std::filesystem::recursive_directory_iterator{p.value()}) {
 
         std::vector<std::regex> rexs;
@@ -120,19 +117,7 @@ int main(int argc, char *argv[]) {
 
         for (auto&[number, pos_len_vec, text] : res) {
 
-            std::sort(std::begin(pos_len_vec), std::end(pos_len_vec),
-                      [](const auto& a, const auto& b){ return a.pos < b.len; });
-
-            size_t position { 0 };
-
-            std::string colored_res = "";
-
-            for(const auto& [pos, len, id] : pos_len_vec) {
-                colored_res += text.substr(position, pos-position) +
-                        "\033[1;3"+std::to_string(id%5)+"m" + text.substr(pos, len) + "\033[0m";
-                position = pos + len;
-            }
-            colored_res += text.substr(position, text.size()-position);
+            auto colored_res { colorize(pos_len_vec, text) };
 
             std::cout << entry << ":" << number
                  << " - " << colored_res << '\n';
